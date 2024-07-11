@@ -50,22 +50,35 @@ app.post('/search', (req, res) => {
         // the whole response has been received. print out the result.
         httpsRes.on('end', () => {
           var doc = new JSDOM(data, {
-            url: url
+            url: url,
+            runScripts: 'dangerously'
           });
+          doc.window.addEventListener('DOMContentLoaded', event => {
+              doc.window.addEventListener('load', event => {
+          
+                //let clonedDoc = dom.window.document.cloneNode(true);
+                //let reader = new Readability(clonedDoc);
+                //let article = reader.parse();
 
-          let clonedDoc = doc.window.document.cloneNode(true);
-          let reader = new Readability(clonedDoc);
-          let article = reader.parse();
+               //console.log("article output: ");
+               //console.log(article);
 
-          console.log("article output: ");
-          console.log(article);
-
-          var result_urls = doc.window.document.getElementsByTagName('h3');
-          for (x of result_urls) {
-            console.log("element: " + x.textContent);
-            console.log("elementparent: " + x.parentNode.innerText);
-            console.log("\n")
-          }
+                var result_urls = doc.window.document.querySelectorAll('h3');
+                let i = 0;
+                for (x of result_urls) {
+                  if(x.parentNode.parentNode.parentNode.getAttribute('href') == null){
+                    i--;
+                    continue;
+                  }
+                  if (i++ > max_search_results) {
+                    break;
+                  }
+                  currentNodeHref = x.parentNode.parentNode.parentNode.getAttribute('href');
+                  console.log("element: " + currentNodeHref.substring(7, currentNodeHref.indexOf("&sa")));
+                  console.log("\n")
+                }
+            });
+          });
         });
       }
     }).on('error', (e) => {
