@@ -13,34 +13,34 @@ app.use(express.json());
 // Define the port
 const port = 3000;
 
+let defaultLogLevel = "debug"
+
 // Define a route handler for the root URL
 app.post('/search', (req, res) => {
   const body = req.body
   const term = body.term;
   const engine = body.engine;
-  const max_search_results = body.maxSearchResults ? body.maxSearchResults : 5;
-  var engine_search_url;
+  const maxSearchResults = body.maxSearchResults ? body.maxSearchResults : 5;
+  var engineSearchUrl;
 
   switch(engine) {
     case "google":
-      engine_search_url = "https://google.com/search?q=" + encodeURIComponent(term);
+      engineSearchUrl = "https://google.com/search?q=" + encodeURIComponent(term);
       break;
     case "bing":
-      engine_search_url = "https://bing.com/search?q=" + encodeURIComponent(term);
+      engineSearchUrl = "https://bing.com/search?q=" + encodeURIComponent(term);
       break;
   }
 
-  console.log('searching: ' + engine_search_url);
+  console.log("info", engineSearchUrl);
 
   var get_follow_redirects = (url) => {
-    console.log("reached 1")
     https.get(url, (httpsRes) => {
 
       if(httpsRes.statusCode >= 300 && httpsRes.statusCode < 400) {
-        console.log("following redirect");
+        log("debug", `following a redirect to: ${url}`);
         get_follow_redirects(httpsRes.headers.location);
       } else {
-        console.log("reached 2")
         let data = '';
 
         // a chunk of data has been received.
@@ -49,34 +49,36 @@ app.post('/search', (req, res) => {
         });
         // the whole response has been received. print out the result.
         httpsRes.on('end', () => {
+          
           var doc = new JSDOM(data, {
             url: url,
             runScripts: 'dangerously'
           });
-          doc.window.addEventListener('DOMContentLoaded', event => {
-              doc.window.addEventListener('load', event => {
           
-                //let clonedDoc = dom.window.document.cloneNode(true);
-                //let reader = new Readability(clonedDoc);
-                //let article = reader.parse();
+          doc.window.addEventListener('DOMContentLoaded', () => {
+              doc.window.addEventListener('load', () => {
+          
+              let resultUrls = doc.window.document.querySelectorAll('h3');
+              let i = 0;
 
-               //console.log("article output: ");
-               //console.log(article);
+              let parsedSiteList = [];
 
-                var result_urls = doc.window.document.querySelectorAll('h3');
-                let i = 0;
-                for (x of result_urls) {
-                  if(x.parentNode.parentNode.parentNode.getAttribute('href') == null){
-                    i--;
-                    continue;
-                  }
-                  if (i++ > max_search_results) {
-                    break;
-                  }
-                  currentNodeHref = x.parentNode.parentNode.parentNode.getAttribute('href');
-                  console.log("element: " + currentNodeHref.substring(7, currentNodeHref.indexOf("&sa")));
-                  console.log("\n")
-                }
+              for (x of resultUrls) {
+                let currentNodeHref = x.closest('a').getAttribute('href') 
+                
+                if(!currentNodeHref) continue;
+                if (i++ > maxSearchResults) break;
+                
+                let refinedCurrentNodeHref = decodeURIComponent(
+                  currentNodeHref.substring(7, currentNodeHref.indexOf("&sa")))
+                
+                log("info", refinedCurrentNodeHref);
+                parseWithReadability(refinedCurrentNodeHref).then((article) => {
+                  parsedSiteList.push(article);
+                });
+              }
+              console.log(parsedSiteList);
+                //res.send({ parsedSiteList });
             });
           });
         });
@@ -86,36 +88,39 @@ app.post('/search', (req, res) => {
       //return "FAILED TO ACCESS SEARCH ENGINE";
     });
   }
-  get_follow_redirects(engine_search_url);
+  get_follow_redirects(engineSearchUrl);
+
   res.send("query excecuted\n");
-return;
-
-  https.get(engine_search_url, (httpsRes) => {
-    let data = '';
-    // a chunk of data has been received.
-    httpsRes.on('data', (chunk) => {
-      data += chunk;
-    });
-    // the whole response has been received. print out the result.
-    httpsRes.on('end', () => {
-      var doc = new JSDOM(data, {
-        url: url
-      });
-
-      let reader = new Readability(doc.window.document);
-      let article = reader.parse();
-
-      console.log("article output: ");
-      console.log(article);
-      res.send(JSON.stringify(article));
-    });
-
-  }).on('error', (e) => {
-    console.error(`Got error: ${e.message}`);
-    return "FAILED TO GET ARTICLE";
-  });
-  
+  return;
 });
+
+// https://www.30secondsofcode.org/js/s/color-console-output/
+
+const logLevels = (...msg) => {
+  const levels = {
+    info: `\x1b[37m${msg.join(' ')}`,
+    infoMarker: `\x1b[30m\x1b[47m[INFO]\x1b[0m`,
+    error: `\x1b[31m${msg.join(' ')}\x1b[37m`,
+    errorMarker: `\x1b[41m[ERROR]\x1b[0m`,
+    debug: `\x1b[32m${msg.join(' ')}\x1b[37m`,
+    debugMarker: `\x1b[30m\x1b[42m[DEBUG]\x1b[0m`,
+  };
+  return (style) => levels[style];
+};
+
+function log(logLevel=defaultLogLevel, ...msg) {
+  console.log(logLevels()(logLevel + 'Marker') + " " + logLevels(msg)(logLevel))
+}
+
+async function parseWithReadability(url) {
+  log("info", `parsing with readability: ${url}`)
+  JSDOM.fromURL(url).then((doc) => {
+    let article = new Readability(doc.window.document).parse();
+
+    log("info", `article parsed, text: ${article.excerpt.slice(0, 300)}`)
+    return { siteName: article.siteName, url: url, textContent: article.textContent};
+  })
+}
 
 // Start the server and listen on the specified port
 app.listen(port, () => {
