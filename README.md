@@ -7,8 +7,8 @@ This repository contains a simple search server to support local search with the
 ```json
 {
     "term": <your search term>,
-    "engine": <only google is supported at the moment. Feel free to add others.>,
-    "maxSearchResults": <the maximum number of search results to return. the actual number may be lower due to parsing faillures.>
+    "engine": <only google is supported at the moment. feel free to add others locally or thru PRs>,
+    "maxSearchResults": <the maximum number of search results to return. the actual number may be lower due to parsing failures>
 }
 ```
 
