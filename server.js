@@ -23,75 +23,80 @@ app.post('/search', (req, res) => {
   const maxSearchResults = body.maxSearchResults ? body.maxSearchResults : 5;
   var engineSearchUrl;
 
-  switch(engine) {
-    case "google":
-      engineSearchUrl = "https://google.com/search?q=" + encodeURIComponent(term);
-      break;
-    case "bing":
-      engineSearchUrl = "https://bing.com/search?q=" + encodeURIComponent(term);
-      break;
-  }
-
-  console.log("info", engineSearchUrl);
-
-  var get_follow_redirects = (url) => {
+  var searchHandlerGoogle = (url) => {
     https.get(url, (httpsRes) => {
 
+      // handling location based redirects
       if(httpsRes.statusCode >= 300 && httpsRes.statusCode < 400) {
+        
         log("debug", `following a redirect to: ${url}`);
-        get_follow_redirects(httpsRes.headers.location);
+        searchHandlerGoogle(httpsRes.headers.location);
+
       } else {
-        let data = '';
+
+        let chunks = '';
 
         // a chunk of data has been received.
         httpsRes.on('data', (chunk) => {
-          data += chunk;
+          chunks += chunk;
         });
+
         // the whole response has been received. print out the result.
         httpsRes.on('end', () => {
           
-          var doc = new JSDOM(data, {
-            url: url,
-            runScripts: 'dangerously'
-          });
+          var doc = new JSDOM(chunks);
           
           doc.window.addEventListener('DOMContentLoaded', () => {
-              doc.window.addEventListener('load', () => {
-          
+            doc.window.addEventListener('load', () => {
+              
               let resultUrls = doc.window.document.querySelectorAll('h3');
               let i = 0;
-
-              let parsedSiteList = [];
+              let promises = [];
 
               for (x of resultUrls) {
+                if(!x.closest('a') || !x.closest('a').getAttribute('href')) continue;
                 let currentNodeHref = x.closest('a').getAttribute('href') 
-                
-                if(!currentNodeHref) continue;
-                if (i++ > maxSearchResults) break;
+                if (i++ >= maxSearchResults) break;
                 
                 let refinedCurrentNodeHref = decodeURIComponent(
                   currentNodeHref.substring(7, currentNodeHref.indexOf("&sa")))
                 
-                log("info", refinedCurrentNodeHref);
-                parseWithReadability(refinedCurrentNodeHref).then((article) => {
-                  parsedSiteList.push(article);
-                });
+                log("debug", `current node being processed: ${refinedCurrentNodeHref}`);
+                promises.push(parseWithReadability(refinedCurrentNodeHref));
               }
-              console.log(parsedSiteList);
-                //res.send({ parsedSiteList });
+
+              Promise.all(promises).then(parsedSiteList => {
+                res.send(parsedSiteList);
+                log("info", "Query responded")
+              });
             });
           });
         });
       }
+
     }).on('error', (e) => {
-      console.error(`Got error: ${e.message}`);
-      //return "FAILED TO ACCESS SEARCH ENGINE";
+      log("error", `Got error: ${e.message}`);
+      res.send(`{"error": "failed to access search engine."}`);
     });
   }
-  get_follow_redirects(engineSearchUrl);
 
-  res.send("query excecuted\n");
-  return;
+  // add new engines here.
+  switch(engine) {
+    case "google":
+      engineSearchUrl = "https://google.com/search?q=" + encodeURIComponent(term);
+      searchHandlerGoogle(engineSearchUrl);
+      break;
+    //case "bing":
+    //  engineSearchUrl = "https://bing.com/search?q=" + encodeURIComponent(term);
+    //  break;
+    default:
+      log("error", `Unknown engine supplied: ${engine}`);
+      res.send(`{"error": "unknown engine supplied."}`)
+      return;
+  }
+
+  log("debug", `Search engine URL: ${engineSearchUrl}`);
+
 });
 
 // https://www.30secondsofcode.org/js/s/color-console-output/
@@ -99,7 +104,7 @@ app.post('/search', (req, res) => {
 const logLevels = (...msg) => {
   const levels = {
     info: `\x1b[37m${msg.join(' ')}`,
-    infoMarker: `\x1b[30m\x1b[47m[INFO]\x1b[0m`,
+    infoMarker: ` \x1b[30m\x1b[47m[INFO]\x1b[0m`,
     error: `\x1b[31m${msg.join(' ')}\x1b[37m`,
     errorMarker: `\x1b[41m[ERROR]\x1b[0m`,
     debug: `\x1b[32m${msg.join(' ')}\x1b[37m`,
@@ -113,17 +118,50 @@ function log(logLevel=defaultLogLevel, ...msg) {
 }
 
 async function parseWithReadability(url) {
-  log("info", `parsing with readability: ${url}`)
-  JSDOM.fromURL(url).then((doc) => {
-    let article = new Readability(doc.window.document).parse();
 
-    log("info", `article parsed, text: ${article.excerpt.slice(0, 300)}`)
-    return { siteName: article.siteName, url: url, textContent: article.textContent};
-  })
+  log("debug", `parsing with readability: ${url}`)
+  
+  let dom = await JSDOM.fromURL(url);
+  let article = new Readability(dom.window.document).parse();
+
+  if(!article || !article.textContent) {
+    log("error", `failed to parse article "${url}".`)
+    return;
+  }
+
+  log("info", `article "${url}" parsed`)
+  
+  // we consider div contents to be readable
+
+  let readableDom = new JSDOM(article.content
+    .replaceAll("\t"," ")
+    .replaceAll("\n", " ")
+    .replaceAll(/\s+/g, " ")
+    .trim()
+  )
+
+  let readableDivs = readableDom.window.document.querySelectorAll('div');
+  let readableDivContents = []
+  for (div of readableDivs) {
+    let divArticle = new Readability(
+      new JSDOM(div.innerHTML).window.document
+    ).parse();
+
+    if (divArticle && divArticle.textContent) {
+      readableDivContents.push(divArticle.textContent.slice(0,1000))
+    }
+  }
+
+  return { 
+    siteName: article.siteName,
+    url: url,
+    textContent: readableDivContents.join("\n").slice(0,4000) // TODO: a rough limit for content supplied 
+  };
 }
 
 // Start the server and listen on the specified port
 app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}/`); // Log server start info
+  console.log("\n");
+  log("debug", `Server running at http://localhost:${port}/`); // Log server start info
 });
 
