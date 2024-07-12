@@ -24,7 +24,6 @@
   "homepage": "https://github.com/suryyyansh/local-search-server#readme",
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
-    "@types/follow-redirects": "^1.14.4",
     "express": "^4.19.2",
     "jsdom": "^24.1.0"
   }
